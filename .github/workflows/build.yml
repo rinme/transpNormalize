@@ -1,0 +1,39 @@
+# Build workflow for remove_transparent_margins
+#
+# Builds the Rust project in release mode on every push and pull request.
+# On success the compiled binary is uploaded as a GitHub Actions artifact
+# named "remove-transparent-margins-binary", which can be downloaded from
+# the Actions run page (Actions → select run → Artifacts section).
+
+name: Build
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  build:
+    name: Build release binary
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build (release)
+        run: cargo build --release
+
+      - name: Run tests
+        run: cargo test
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: remove-transparent-margins-binary
+          path: target/release/remove_transparent_margins
