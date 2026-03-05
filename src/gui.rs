@@ -68,13 +68,12 @@ impl App {
 
     /// Derives the output path for an input file based on the current settings.
     fn output_for(&self, input: &Path) -> PathBuf {
-        if self.use_custom_output_dir {
-            self.output_dir.join(input.file_name().unwrap_or_default())
+        let output_dir = if self.use_custom_output_dir {
+            Some(self.output_dir.as_path())
         } else {
-            let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-            let ext = input.extension().unwrap_or_default().to_string_lossy();
-            input.with_file_name(format!("{}_cropped.{}", stem, ext))
-        }
+            None
+        };
+        crate::processing::derive_output_path(input, output_dir)
     }
 
     /// Spawns a background thread to process all pending files.

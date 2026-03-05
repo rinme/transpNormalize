@@ -47,16 +47,9 @@ struct Args {
 
 /// Derives an output path for `input` given an optional `output_dir`.
 /// - With `output_dir`: output_dir/<filename>
-/// - Without: <stem>_cropped.<ext> next to the input file.
+/// - Without: <stem>_cropped[.<ext>] next to the input file.
 fn derive_output(input: &PathBuf, output_dir: &Option<PathBuf>) -> PathBuf {
-    match output_dir {
-        Some(dir) => dir.join(input.file_name().unwrap_or_default()),
-        None => {
-            let stem = input.file_stem().unwrap_or_default().to_string_lossy();
-            let ext = input.extension().unwrap_or_default().to_string_lossy();
-            input.with_file_name(format!("{}_cropped.{}", stem, ext))
-        }
-    }
+    processing::derive_output_path(input, output_dir.as_deref())
 }
 
 fn run() -> Result<(), ()> {
