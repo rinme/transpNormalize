@@ -1,8 +1,8 @@
 # Build workflow for remove_transparent_margins
 #
-# • On every push and pull request: compiles and runs the test suite.
-# • On version tags (v*): builds release binaries for Linux and Windows
-#   and uploads them as GitHub Actions artifacts.
+# • On pull requests: compiles and runs the test suite.
+# • On version tags (v*): runs the test suite, then builds release binaries
+#   for Linux and Windows and uploads them as GitHub Actions artifacts.
 #
 # Compiled binaries can be downloaded from the run page under
 # Actions → <run> → Artifacts:
@@ -14,12 +14,11 @@ name: Build
 
 on:
   push:
-    branches: ["**"]
     tags: ["v*"]
   pull_request:
 
 jobs:
-  # ── CI – compile check & tests (every push / PR) ───────────────────────────
+  # ── CI – compile check & tests (PRs and version tags) ─────────────────────
   test-linux:
     name: Test (Linux)
     runs-on: ubuntu-latest
