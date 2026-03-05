@@ -1,30 +1,40 @@
-//! remove_transparent_margins
+//! remove_transparent_margins – CLI
 //!
 //! Removes transparent borders around visible content in PNG images.
+//! Supports processing one or many files in a single invocation.
 //!
-//! Usage:
-//!   remove_transparent_margins <input> <output> [--threshold <u8>] [--padding <u32>]
+//! Usage (single file):
+//!   remove_transparent_margins input.png output_dir/ --threshold 10 --padding 2
+//!
+//! Usage (batch):
+//!   remove_transparent_margins *.png --output-dir ./cropped/ --threshold 10
+
+mod processing;
 
 use clap::Parser;
-use image::{GenericImageView, ImageError, RgbaImage};
 use std::path::PathBuf;
 use std::process;
 
-/// Remove transparent margins from a PNG image.
+/// Remove transparent margins from one or more PNG images.
 #[derive(Parser, Debug)]
 #[command(
     name = "remove_transparent_margins",
     about = "Removes transparent borders around visible content in PNG images",
-    long_about = "Reads a PNG with an alpha channel, finds the minimal bounding box of \
-                  pixels whose alpha exceeds --threshold, optionally expands it by \
-                  --padding pixels, and writes the cropped result."
+    long_about = "Reads one or more PNGs with an alpha channel, finds the minimal bounding \
+                  box of pixels whose alpha exceeds --threshold, optionally expands it by \
+                  --padding pixels, and writes the cropped result(s).\n\n\
+                  When --output-dir is not set, each output file is written next to its input \
+                  with '_cropped' inserted before the extension (e.g. image.png → image_cropped.png)."
 )]
 struct Args {
-    /// Path to the input PNG file.
-    input: PathBuf,
+    /// Input PNG file(s). Provide one or more paths for batch processing.
+    #[arg(required = true, value_name = "INPUT")]
+    inputs: Vec<PathBuf>,
 
-    /// Path for the output PNG file.
-    output: PathBuf,
+    /// Directory for output files. Created automatically if it does not exist.
+    /// When omitted, each output is placed next to its input with a '_cropped' suffix.
+    #[arg(long, value_name = "DIR")]
+    output_dir: Option<PathBuf>,
 
     /// Alpha threshold (0–255). Pixels with alpha > threshold are considered visible.
     #[arg(long, default_value_t = 10)]
@@ -35,131 +45,45 @@ struct Args {
     padding: u32,
 }
 
-/// Represents a bounding box as (left, top, right, bottom) pixel coordinates
-/// where right and bottom are *exclusive* (one past the last included pixel).
-struct BoundingBox {
-    left: u32,
-    top: u32,
-    right: u32,
-    bottom: u32,
-}
-
-/// Computes the minimal bounding box of all pixels whose alpha channel value
-/// is strictly greater than `threshold`.
-///
-/// The `image` crate exposes pixels via `pixels()` which iterates in row-major
-/// order. Each pixel is an `Rgba<u8>` whose last component ([3]) is the alpha value.
-///
-/// Returns `None` if no visible pixel was found.
-fn compute_bounding_box(img: &RgbaImage, threshold: u8) -> Option<BoundingBox> {
-    let (width, height) = img.dimensions();
-
-    let mut left = width;
-    let mut top = height;
-    let mut right = 0u32;
-    let mut bottom = 0u32;
-
-    // Iterate over every pixel to find the extremes of the visible region.
-    for (x, y, pixel) in img.enumerate_pixels() {
-        // pixel[3] is the alpha component of the Rgba pixel.
-        if pixel[3] > threshold {
-            if x < left {
-                left = x;
-            }
-            if x + 1 > right {
-                right = x + 1;
-            }
-            if y < top {
-                top = y;
-            }
-            if y + 1 > bottom {
-                bottom = y + 1;
-            }
+/// Derives an output path for `input` given an optional `output_dir`.
+/// - With `output_dir`: output_dir/<filename>
+/// - Without: <stem>_cropped.<ext> next to the input file.
+fn derive_output(input: &PathBuf, output_dir: &Option<PathBuf>) -> PathBuf {
+    match output_dir {
+        Some(dir) => dir.join(input.file_name().unwrap_or_default()),
+        None => {
+            let stem = input.file_stem().unwrap_or_default().to_string_lossy();
+            let ext = input.extension().unwrap_or_default().to_string_lossy();
+            input.with_file_name(format!("{}_cropped.{}", stem, ext))
         }
     }
-
-    if right == 0 || bottom == 0 {
-        // No visible pixel found.
-        return None;
-    }
-
-    Some(BoundingBox { left, top, right, bottom })
 }
 
-/// Applies `padding` to the bounding box, clamping to the image dimensions so the
-/// result never exceeds the original image boundaries.
-fn expand_bounding_box(bbox: BoundingBox, padding: u32, img_width: u32, img_height: u32) -> BoundingBox {
-    BoundingBox {
-        left: bbox.left.saturating_sub(padding),
-        top: bbox.top.saturating_sub(padding),
-        right: (bbox.right + padding).min(img_width),
-        bottom: (bbox.bottom + padding).min(img_height),
-    }
-}
-
-fn run() -> Result<(), ImageError> {
+fn run() -> Result<(), ()> {
     let args = Args::parse();
 
-    // Load and decode the input file as RGBA8.
-    // `image::open` returns a DynamicImage which we convert so that the alpha
-    // channel is always present regardless of the original PNG colour type.
-    let dynamic_img = image::open(&args.input).map_err(|e| {
-        eprintln!(
-            "Error: cannot open input file '{}': {}",
-            args.input.display(),
-            e
-        );
-        e
-    })?;
-
-    // Convert to RgbaImage so every pixel has an explicit alpha channel.
-    let img: RgbaImage = dynamic_img.to_rgba8();
-    let (width, height) = img.dimensions();
-
-    // Compute the bounding box of visible content based on the alpha threshold.
-    let bbox = match compute_bounding_box(&img, args.threshold) {
-        Some(b) => b,
-        None => {
-            // No visible pixels — output the original image unchanged.
-            eprintln!(
-                "Warning: no visible pixels found (all alpha ≤ {}). Writing original image.",
-                args.threshold
-            );
-            img.save(&args.output).map_err(|e| {
-                eprintln!(
-                    "Error: cannot write output file '{}': {}",
-                    args.output.display(),
-                    e
-                );
-                e
+    // Create output directory if it was specified and does not yet exist.
+    if let Some(ref dir) = args.output_dir {
+        if !dir.exists() {
+            std::fs::create_dir_all(dir).map_err(|e| {
+                eprintln!("Error: cannot create output directory '{}': {}", dir.display(), e);
             })?;
-            return Ok(());
         }
-    };
+    }
 
-    // Expand the bounding box by the requested padding, clamped to image borders.
-    let bbox = expand_bounding_box(bbox, args.padding, width, height);
+    let mut had_error = false;
+    for input in &args.inputs {
+        let output = derive_output(input, &args.output_dir);
+        match processing::process_image(input, &output, args.threshold, args.padding) {
+            Ok(()) => println!("{} -> {}", input.display(), output.display()),
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                had_error = true;
+            }
+        }
+    }
 
-    // Crop the image to the (possibly padded) bounding box.
-    // `view` returns a sub-image without copying pixel data; `to_image` materialises it.
-    let crop_width = bbox.right - bbox.left;
-    let crop_height = bbox.bottom - bbox.top;
-    let cropped: RgbaImage = dynamic_img
-        .view(bbox.left, bbox.top, crop_width, crop_height)
-        .to_image();
-
-    // Save the cropped image as PNG.
-    // The alpha channel is preserved because we operate on RgbaImage throughout.
-    cropped.save(&args.output).map_err(|e| {
-        eprintln!(
-            "Error: cannot write output file '{}': {}",
-            args.output.display(),
-            e
-        );
-        e
-    })?;
-
-    Ok(())
+    if had_error { Err(()) } else { Ok(()) }
 }
 
 fn main() {
@@ -167,3 +91,4 @@ fn main() {
         process::exit(1);
     }
 }
+
