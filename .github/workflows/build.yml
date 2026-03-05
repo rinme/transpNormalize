@@ -56,7 +56,7 @@ jobs:
   # ── Windows build ────────────────────────────────────────────────────────────
   build-windows:
     name: Build (Windows)
-    runs-on: self-hosted
+    runs-on: windows-latest
     permissions:
       contents: read
 
